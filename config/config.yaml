@@ -1,0 +1,21 @@
+gmail:
+  credentials_path: "credentials/gmail_credentials.json"
+  token_path: "credentials/gmail_token.json"
+  sender_email: "settlement@nextcapital.com.pk"
+  subject_filter: "Daily Confirmations"
+
+sheets:
+  credentials_path: "credentials/sheets_credentials.json"
+  token_path: "credentials/sheets_token.json"
+  spreadsheet_id: "1SEbkKKooBganzymX9WayuqqEJwUefDi-MZ72UoWlqIM"
+  tab_name: "Entry"
+
+state:
+  state_file: "data/state.json"
+  lookback_days: 30
+
+logging:
+  log_file: "logs/psx_automation.log"
+  log_level: "INFO"
+  max_bytes: 10485760  # 10MB
+  backup_count: 5
