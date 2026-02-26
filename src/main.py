@@ -9,7 +9,7 @@ import yaml
 
 from gmail_client import GmailClient
 from pdf_parser import PDFParser
-from sheets_client import SheetsClient
+from database import Database
 from state_manager import StateManager
 
 
@@ -103,7 +103,7 @@ def main(dry_run: bool = False):
         logger.info("=" * 60)
         if dry_run:
             logger.info("PSX Email Automation Started (DRY RUN MODE)")
-            logger.info("No data will be written to Google Sheets")
+            logger.info("No data will be written to database")
         else:
             logger.info("PSX Email Automation Started")
         logger.info("=" * 60)
@@ -119,12 +119,8 @@ def main(dry_run: bool = False):
 
         parser = PDFParser()
 
-        sheets = SheetsClient(
-            config['sheets']['credentials_path'],
-            config['sheets']['token_path'],
-            config['sheets']['spreadsheet_id']
-        )
-        logger.info("Sheets client initialized")
+        db = Database(config.get('database', {}).get('path', 'data/portfolio.db'))
+        logger.info("Database initialized")
 
         state_mgr = StateManager(config['state']['state_file'])
 
@@ -189,7 +185,8 @@ def main(dry_run: bool = False):
             return
 
         # Filter duplicates
-        new_transactions = sheets.filter_duplicates(all_transactions)
+        existing_dates = db.get_existing_dates()
+        new_transactions = [t for t in all_transactions if t.date.date() not in existing_dates]
         duplicates_count = len(all_transactions) - len(new_transactions)
 
         if duplicates_count > 0:
@@ -205,18 +202,18 @@ def main(dry_run: bool = False):
         if new_transactions:
             if dry_run:
                 logger.info("=" * 60)
-                logger.info("DRY RUN: The following would be written to Google Sheets:")
+                logger.info("DRY RUN: The following would be written to database:")
                 logger.info("=" * 60)
                 for i, t in enumerate(new_transactions, 1):
-                    row = t.to_sheets_row()
-                    logger.info(f"{i}. {row[0]} | {row[1]} | {row[2]} | {row[3]} shares | ${row[5]:.4f}")
+                    logger.info(f"{i}. {t.symbol} | {t.date.strftime('%Y-%m-%d')} | {t.mode} | {t.shares} shares | Rs {t.trade_price:.4f}")
                 logger.info("=" * 60)
-                logger.info(f"DRY RUN: Would add {len(new_transactions)} transaction(s) to sheet")
+                logger.info(f"DRY RUN: Would add {len(new_transactions)} transaction(s) to database")
                 logger.info("DRY RUN: No data was actually written")
                 logger.info("DRY RUN: No state was updated")
             else:
-                sheets.append_transactions(config['sheets']['tab_name'], new_transactions)
-                logger.info(f"Successfully added {len(new_transactions)} transaction(s) to sheet")
+                for t in new_transactions:
+                    db.add_trade(t)
+                logger.info(f"Successfully added {len(new_transactions)} transaction(s) to database")
         else:
             logger.info("No new transactions to add (all duplicates)")
 

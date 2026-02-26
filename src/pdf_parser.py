@@ -118,7 +118,8 @@ class PDFParser:
 
             # Transaction lines start with number (shares), then symbol
             # Pattern: NUMBER SYMBOL ...other data... NET_AMOUNT (last number)
-            match = re.match(r'^(\d+)\s+([A-Z]+)\s+.*?(\d+(?:,\d{3})*\.\d{2})$', line.strip())
+            # Shares may be comma-formatted (e.g. 2,000)
+            match = re.match(r'^(\d{1,3}(?:,\d{3})*)\s+([A-Z]+)\s+.*?(\d+(?:,\d{3})*\.\d{2})$', line.strip())
 
             if match:
                 shares_str = match.group(1)
@@ -131,7 +132,7 @@ class PDFParser:
                     continue
 
                 try:
-                    shares = int(shares_str)
+                    shares = int(shares_str.replace(',', ''))
                     net_amount = float(net_amount_str)
 
                     # Calculate net price per share (after taxes and fees)

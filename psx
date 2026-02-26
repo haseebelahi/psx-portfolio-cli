@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# PSX Portfolio Tracker — run from project root
+cd "$(dirname "$0")"
+exec uv run python src/cli.py "$@"

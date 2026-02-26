@@ -1,0 +1,54 @@
+CEMENT:
+  - CHCC
+  - DGKC
+  - LUCK
+  - PIOC
+  - KOHC
+  - MLCF
+  - ACPL
+
+PHARMA:
+  - AGP
+  - CPHL
+  - GLAXO
+  - HALEON
+  - HINOON
+  - ICI
+  - SEARL
+
+FERTILIZER:
+  - EFERT
+  - FFC
+  - FFBL
+  - SAZEW
+
+COMMERCIAL BANK:
+  - MEBL
+  - FABL
+  - UBL
+  - HBL
+  - MCB
+  - ABL
+
+REAL ESTATE:
+  - DCR
+  - ARPL
+
+TECHNOLOGY:
+  - SYS
+  - TRG
+  - NETSOL
+
+TEXTILE:
+  - ILP
+  - GATM
+
+CHEMICAL:
+  - ENGRO
+  - NATF
+
+OIL & GAS:
+  - ATRL
+  - MARI
+  - PSO
+  - HUBC
