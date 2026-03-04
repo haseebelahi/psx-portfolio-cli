@@ -3,6 +3,46 @@ from dataclasses import dataclass
 from datetime import date
 
 
+def xirr(cash_flows: list[tuple[date, float]]) -> float:
+    """Return the annualised internal rate of return for irregular cash flows.
+
+    cash_flows is a list of (date, amount) pairs where negative amounts are
+    outflows (deposits) and positive amounts are inflows (terminal value).
+    Returns the rate as a percentage, or 0.0 if it cannot be solved.
+    """
+    if len(cash_flows) < 2:
+        return 0.0
+
+    t0 = cash_flows[0][0]
+    times   = [(cf[0] - t0).days / 365.25 for cf in cash_flows]
+    amounts = [cf[1] for cf in cash_flows]
+
+    def npv(rate: float) -> float:
+        return sum(a / (1 + rate) ** t for a, t in zip(amounts, times))
+
+    def dnpv(rate: float) -> float:
+        return sum(-t * a / (1 + rate) ** (t + 1) for a, t in zip(amounts, times))
+
+    rate = 0.1  # initial guess
+    for _ in range(200):
+        f  = npv(rate)
+        df = dnpv(rate)
+        if abs(df) < 1e-12:
+            break
+        step = f / df
+        rate -= step
+        if rate <= -1:
+            rate = -0.9999
+        if abs(step) < 1e-8:
+            break
+
+    # Sanity check: if NPV is not close to zero the solver diverged
+    if abs(npv(rate)) > 1.0:
+        return 0.0
+
+    return rate * 100
+
+
 @dataclass
 class Position:
     symbol: str
@@ -13,6 +53,8 @@ class Position:
     market_value: float
     unrealized_pnl: float
     unrealized_pnl_pct: float
+    cagr: float
+    xirr: float
 
 
 @dataclass
@@ -28,6 +70,7 @@ class PortfolioSummary:
     pnl: float
     absolute_return: float
     annualized_return: float
+    xirr_return: float
     first_trade_date: date | None
     years_invested: float
 
@@ -38,25 +81,40 @@ def compute_positions(trades: list[dict], prices: dict[str, float]) -> list[Posi
     for t in trades:
         sym = t["symbol"]
         if sym not in holdings:
-            holdings[sym] = {"buy_shares": 0, "sell_shares": 0, "buy_cost": 0.0}
+            holdings[sym] = {"buy_shares": 0, "sell_shares": 0, "buy_cost": 0.0, "flows": []}
+        d = holdings[sym]
+        amt = t["shares"] * t["trade_price"]
         if t["mode"] == "BUY":
-            holdings[sym]["buy_shares"] += t["shares"]
-            holdings[sym]["buy_cost"] += t["shares"] * t["trade_price"]
+            d["buy_shares"] += t["shares"]
+            d["buy_cost"]   += amt
+            d["flows"].append((date.fromisoformat(t["date"]), -amt))
         elif t["mode"] == "SELL":
-            holdings[sym]["sell_shares"] += t["shares"]
+            d["sell_shares"] += t["shares"]
+            d["flows"].append((date.fromisoformat(t["date"]), +amt))
 
+    today = date.today()
     positions: list[Position] = []
     for sym, data in holdings.items():
         current_shares = data["buy_shares"] - data["sell_shares"]
         if current_shares <= 0:
             continue
 
-        avg_buy = data["buy_cost"] / data["buy_shares"] if data["buy_shares"] else 0.0
-        cur_price = prices.get(sym, avg_buy)
+        avg_buy    = data["buy_cost"] / data["buy_shares"] if data["buy_shares"] else 0.0
+        cur_price  = prices.get(sym, avg_buy)
         market_val = current_shares * cur_price
-        cost = current_shares * avg_buy
-        pnl = market_val - cost
-        pnl_pct = (pnl / cost * 100) if cost else 0.0
+        cost       = current_shares * avg_buy
+        pnl        = market_val - cost
+        pnl_pct    = (pnl / cost * 100) if cost else 0.0
+
+        # CAGR: from first trade to today on open position only
+        first_date  = min(cf[0] for cf in data["flows"])
+        years       = (today - first_date).days / 365.25
+        pos_cagr    = ((market_val / cost) ** (1 / years) - 1) * 100 if years > 0 and cost > 0 else 0.0
+
+        # XIRR: all buy/sell flows + terminal market value today
+        flows = data["flows"] + [(today, market_val)]
+        flows.sort(key=lambda cf: cf[0])
+        pos_xirr = xirr(flows)
 
         positions.append(
             Position(
@@ -68,6 +126,8 @@ def compute_positions(trades: list[dict], prices: dict[str, float]) -> list[Posi
                 market_value=market_val,
                 unrealized_pnl=pnl,
                 unrealized_pnl_pct=pnl_pct,
+                cagr=pos_cagr,
+                xirr=pos_xirr,
             )
         )
 
@@ -85,7 +145,7 @@ def compute_summary(
     sell_proceeds = sum(t["shares"] * t["trade_price"] for t in trades if t["mode"] == "SELL")
     total_dividends = sum(d["after_tax_amount"] for d in dividends)
 
-    cash_balance = total_deposits + sell_proceeds + total_dividends - buy_cost
+    cash_balance = total_deposits + sell_proceeds - buy_cost
     market_value = sum(p.market_value for p in positions)
     current_invested = sum(p.cost_basis for p in positions)
     nlv = cash_balance + market_value
@@ -95,6 +155,7 @@ def compute_summary(
     first_trade_date = None
     years_invested = 0.0
     annualized_return = 0.0
+    xirr_return = 0.0
 
     if trades:
         first_trade_date = min(date.fromisoformat(t["date"]) for t in trades)
@@ -102,6 +163,13 @@ def compute_summary(
         years_invested = days / 365.25
         if years_invested > 0 and total_deposits > 0:
             annualized_return = ((nlv / total_deposits) ** (1 / years_invested) - 1) * 100
+
+    if deposits and nlv > 0:
+        # Each deposit is an outflow (negative); today's NLV is the terminal inflow
+        cash_flows = [(date.fromisoformat(d["date"]), -d["amount"]) for d in deposits]
+        cash_flows.append((date.today(), nlv))
+        cash_flows.sort(key=lambda cf: cf[0])
+        xirr_return = xirr(cash_flows)
 
     return PortfolioSummary(
         total_deposits=total_deposits,
@@ -115,6 +183,7 @@ def compute_summary(
         pnl=pnl,
         absolute_return=absolute_return,
         annualized_return=annualized_return,
+        xirr_return=xirr_return,
         first_trade_date=first_trade_date,
         years_invested=years_invested,
     )

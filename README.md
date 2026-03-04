@@ -8,7 +8,9 @@ A local CLI tool for tracking a Pakistani stock exchange (PSX) portfolio. Automa
 - Extracts transactions from PDF attachments, calculates net price per share
 - Stores trades, dividends, and deposits in a local SQLite database
 - Live prices scraped from dps.psx.com.pk (cached after market close)
-- Portfolio dashboard with P&L, CAGR, cash balance, and sector allocation
+- Portfolio dashboard with P&L, CAGR, XIRR, cash balance, and sector allocation
+- Shariah compliance view — debt ratio and dividend purification amounts
+- Terminal charts for NLV history and cumulative deposits vs KSE100
 - Manual entry for dividends and deposits
 
 ## Project Structure
@@ -16,23 +18,33 @@ A local CLI tool for tracking a Pakistani stock exchange (PSX) portfolio. Automa
 ```
 psx-auto-update/
 ├── src/
-│   ├── cli.py            # CLI entry point (all commands)
-│   ├── database.py       # SQLite wrapper
-│   ├── price_fetcher.py  # Live price scraping with caching
-│   ├── portfolio.py      # P&L and summary calculations
-│   ├── gmail_client.py   # Gmail API integration
-│   ├── pdf_parser.py     # Broker PDF parsing
-│   ├── state_manager.py  # Last-run timestamp tracking
-│   └── models.py         # Data models
+│   ├── cli.py              # Thin CLI entry point
+│   ├── helpers.py          # Shared utilities (DB, config, Shariah helpers)
+│   ├── commands/
+│   │   ├── sync.py         # sync command
+│   │   ├── dashboard.py    # dashboard command + sector allocation
+│   │   ├── positions.py    # positions command
+│   │   ├── trades.py       # trades + history commands
+│   │   ├── dividends.py    # dividends command
+│   │   ├── chart.py        # chart group (nlv, deposits)
+│   │   ├── add.py          # add group (dividend, deposit)
+│   │   └── import_.py      # import + import-kse commands
+│   ├── database.py         # SQLite wrapper
+│   ├── price_fetcher.py    # Live price scraping with caching
+│   ├── portfolio.py        # P&L and summary calculations
+│   ├── gmail_client.py     # Gmail API integration
+│   ├── pdf_parser.py       # Broker PDF parsing
+│   ├── state_manager.py    # Last-run timestamp tracking
+│   └── models.py           # Data models
 ├── scripts/
 │   └── import_from_sheets.py  # One-time migration from Google Sheets
 ├── config/
-│   ├── config.yaml       # API credentials paths, email filters
-│   └── sectors.yaml      # Symbol → sector mapping
-├── credentials/          # OAuth tokens (gitignored)
-├── data/                 # SQLite DB, state file, failed PDFs (gitignored)
-├── logs/                 # Rotating logs (gitignored)
-├── psx                   # Shell script — run from project root
+│   ├── config.yaml         # API credentials paths, email filters
+│   └── sectors.yaml        # Symbol → sector mapping
+├── credentials/            # OAuth tokens (gitignored)
+├── data/                   # SQLite DB, state file, failed PDFs (gitignored)
+├── logs/                   # Rotating logs (gitignored)
+├── psx                     # Shell script — run from project root
 └── pyproject.toml
 ```
 
@@ -95,39 +107,18 @@ All commands are run via the `./psx` script from the project root.
 ./psx dashboard
 ```
 
-```
-╭─────────────────────────────────╮
-│      Portfolio Dashboard        │
-│  Last Updated: 26 Feb 2026      │
-│  Cash Balance:      Rs 261,614  │
-│                                 │
-│  Net Liquidating Value          │
-│                   Rs 8,729,385  │
-│  Current Invested Amount        │
-│                   Rs 7,520,528  │
-│  Total Deposits   Rs 7,130,000  │
-│                                 │
-│  Profit / Loss    Rs 1,599,385  │
-│  Absolute Ret         22.43%    │
-│  Annualized Ret       28.20%    │
-│                                 │
-│  Total Dividends    Rs 137,485  │
-│  Since: 1.6 years               │
-╰─────────────────────────────────╯
-
-Sector Allocation
- REAL ESTATE    Rs  1,753,200  20.1%  █████████████
- PHARMA         Rs  1,448,000  16.6%  ███████████
- ...
-```
+Shows net liquidating value, invested amount, cash balance, total deposits, P&L (absolute, CAGR, XIRR), daily P&L, dividends, and sector allocation with per-sector CAGR and XIRR. Saves a daily portfolio snapshot after market close.
 
 ### Current positions
 
 ```bash
-./psx positions
+./psx positions                          # sorted by market value (default)
+./psx positions --sort [value|symbol|day|abs|cagr|xirr]
+./psx positions --shariah                # add D/A ratio column (AAOIFI compliance)
+./psx positions --shariah path/to.pdf    # use a specific Shariah screening PDF
 ```
 
-Shows each open position with average buy price, current live price, market value, and unrealized P&L.
+Shows each open position with average buy price, current live price, market value, day P&L, unrealized P&L, CAGR, and XIRR. The `--shariah` flag adds a debt-to-assets ratio column — green if below 33.33% (AAOIFI compliant), red if above.
 
 ### Trade history
 
@@ -146,8 +137,19 @@ Shows each open position with average buy price, current live price, market valu
 ### Dividends
 
 ```bash
-./psx dividends                 # all dividends
-./psx dividends --symbol EFERT  # one symbol
+./psx dividends                          # detail view — all dividends
+./psx dividends --symbol EFERT           # filter by symbol
+./psx dividends --summary                # one row per symbol with yield on cost
+./psx dividends --summary --shariah      # add purification % and amount
+```
+
+The `--shariah` flag reads non-compliant income percentages from the KMIALL screening PDF and calculates purification amounts per dividend received. Parsed data is cached in SQLite for 90 days.
+
+### Terminal charts
+
+```bash
+./psx chart nlv         # historical NLV, invested amount, and total deposits
+./psx chart deposits    # cumulative deposits overlaid with KSE100 index
 ```
 
 ### Manual entries
@@ -168,6 +170,15 @@ Shows each open position with average buy price, current live price, market valu
 ```
 
 Reads trades and deposits from the Entry tab (columns B–G, J–L) and dividends from the Dividends tab (columns B–G).
+
+### Import historical KSE100 data
+
+```bash
+./psx import-kse                            # default: ~/Downloads/Karachi 100 Historical Data.csv
+./psx import-kse path/to/kse100.csv        # custom path
+```
+
+Downloads historical KSE100 data from Investing.com as CSV, then imports it for use in `chart deposits`.
 
 ## Prices
 
@@ -198,4 +209,9 @@ crontab -e
 **Stale prices** — delete the `price_cache` rows in `data/portfolio.db` to force a fresh fetch:
 ```bash
 sqlite3 data/portfolio.db "DELETE FROM price_cache;"
+```
+
+**Shariah PDF not found** — place the KMIALL screening PDF in the project root or pass its path explicitly via `--shariah path/to/file.pdf`. Cached data can be cleared with:
+```bash
+sqlite3 data/portfolio.db "DELETE FROM shariah_cache;"
 ```
