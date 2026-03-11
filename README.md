@@ -22,6 +22,7 @@ psx-auto-update/
 │   ├── helpers.py          # Shared utilities (DB, config, Shariah helpers)
 │   ├── commands/
 │   │   ├── sync.py         # sync command
+│   │   ├── fetch.py        # fetch command (prices + indices for cron)
 │   │   ├── dashboard.py    # dashboard command + sector allocation
 │   │   ├── positions.py    # positions command
 │   │   ├── trades.py       # trades + history commands
@@ -148,8 +149,12 @@ The `--shariah` flag reads non-compliant income percentages from the KMIALL scre
 ### Terminal charts
 
 ```bash
-./psx chart nlv         # historical NLV, invested amount, and total deposits
-./psx chart deposits    # cumulative deposits overlaid with KSE100 index
+./psx chart nlv                     # all-time NLV, invested amount, and total deposits
+./psx chart nlv --period 7d         # last 7 days
+./psx chart nlv --period 30d        # last 30 days
+./psx chart nlv --period 6m         # last 6 months
+./psx chart nlv --period 1y         # last 1 year
+./psx chart deposits                # cumulative deposits overlaid with KSE100 index (extended to today)
 ```
 
 ### Manual entries
@@ -171,6 +176,19 @@ The `--shariah` flag reads non-compliant income percentages from the KMIALL scre
 
 Reads trades and deposits from the Entry tab (columns B–G, J–L) and dividends from the Dividends tab (columns B–G).
 
+### Fetch prices and index values (for cron)
+
+```bash
+./psx fetch             # fetch live index values + portfolio prices, save to DB
+./psx fetch --quiet     # suppress output (suitable for cron)
+```
+
+Stores KSE100/KMI30 values in `index_history` and refreshes `price_cache` for all portfolio symbols. Intended to be run every 30 minutes during market hours via cron:
+
+```
+*/30 4-10 * * 1-5 cd /path/to/psx-auto-update && ./psx fetch --quiet >> logs/fetch.log 2>&1
+```
+
 ### Import historical KSE100 data
 
 ```bash
@@ -184,19 +202,29 @@ Downloads historical KSE100 data from Investing.com as CSV, then imports it for 
 
 Prices are fetched live from `dps.psx.com.pk` in parallel (one request per symbol). After market close (15:30 PKT, Mon–Fri), the last fetched prices are cached in the database and reused until the next market open.
 
-## Scheduled sync
+## Scheduled Tasks
 
-Add to crontab to sync daily at 16:00 PKT:
-
-```bash
-crontab -e
-```
+For full functionality — including the `chart nlv` and `chart deposits` commands — three cron jobs should be configured. Add them all via `crontab -e`:
 
 ```
+# 1. Fetch live prices + KSE100/KMI30 index values every 30 min during market hours
+#    Required for: chart deposits (KSE100 overlay), up-to-date price cache
+#    04:00–10:30 UTC = 09:00–15:30 PKT (Mon–Fri)
+*/30 4-10 * * 1-5 cd /path/to/psx-auto-update && ./psx fetch --quiet >> logs/fetch.log 2>&1
+
+# 2. Save daily portfolio snapshot after market close
+#    Required for: chart nlv (NLV history over time)
+#    11:30 UTC = 16:30 PKT — runs after Friday's extended close
+30 11 * * 1-5 cd /path/to/psx-auto-update && ./psx dashboard >> logs/dashboard.log 2>&1
+
+# 3. Sync broker emails after market close
+#    11:00 UTC = 16:00 PKT
 0 11 * * 1-5 cd /path/to/psx-auto-update && ./psx sync >> logs/cron.log 2>&1
 ```
 
-(11:00 UTC = 16:00 PKT)
+**Without these cron jobs:**
+- `chart nlv` will show no data (portfolio snapshots are only saved when `dashboard` runs after market close)
+- `chart deposits` KSE100 overlay will be sparse or missing (index values are only recorded when `fetch` or `dashboard` runs)
 
 ## Troubleshooting
 

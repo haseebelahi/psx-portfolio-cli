@@ -1,4 +1,6 @@
 """chart command group — terminal charts for portfolio data."""
+from datetime import date, timedelta
+
 import click
 
 from helpers import console, get_db
@@ -9,8 +11,18 @@ def chart():
     """Terminal charts for portfolio data."""
 
 
+PERIOD_DAYS = {"7d": 7, "30d": 30, "6m": 182, "1y": 365, "all": None}
+
+
 @chart.command("nlv")
-def chart_nlv():
+@click.option(
+    "--period", "-p",
+    default="all",
+    type=click.Choice(list(PERIOD_DAYS)),
+    show_default=True,
+    help="Time period: 7d, 30d, 6m, 1y, all",
+)
+def chart_nlv(period: str):
     """Historical portfolio value (NLV), invested amount, and total deposits."""
     import plotext as plt
 
@@ -18,6 +30,14 @@ def chart_nlv():
     if not rows:
         console.print("[yellow]No portfolio history yet — run ./psx dashboard after market hours.[/yellow]")
         return
+
+    days = PERIOD_DAYS[period]
+    if days is not None:
+        cutoff = (date.today() - timedelta(days=days)).isoformat()
+        rows = [r for r in rows if r["date"] >= cutoff]
+        if not rows:
+            console.print(f"[yellow]No data in the last {period}.[/yellow]")
+            return
 
     dates      = [r["date"] for r in rows]
     nlvs       = [r["nlv"]          / 1_000_000 for r in rows]
@@ -29,7 +49,7 @@ def chart_nlv():
     plt.plot(dates, nlvs,     marker="braille", color="green",  label="NLV (Rs M)")
     plt.plot(dates, invested, marker="braille", color="cyan",   label="Invested (Rs M)")
     plt.plot(dates, deposits, marker="braille", color="yellow", label="Deposits (Rs M)")
-    plt.title("Portfolio Value Over Time")
+    plt.title(f"Portfolio Value — {period.upper()}")
     plt.xlabel("Date")
     plt.ylabel("Rs (millions)")
     plt.plotsize(100, 30)
@@ -66,8 +86,14 @@ def chart_deposits():
         dep_dates.append(d["date"])
         cumulative.append(running / 1_000_000)
 
+    # Extend the deposits line to today with the same cumulative total
+    today_str = date.today().isoformat()
+    if dep_dates[-1] < today_str:
+        dep_dates.append(today_str)
+        cumulative.append(running / 1_000_000)
+
     # KSE100 history filtered to the same date range
-    first_date, last_date = dep_dates[0], dep_dates[-1]
+    first_date, last_date = dep_dates[0], today_str
     kse_rows = [
         (dt, val) for dt, val in db.get_index_history("KSE100")
         if first_date <= dt <= last_date

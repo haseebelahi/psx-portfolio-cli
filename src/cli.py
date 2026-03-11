@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import click
 
 from commands.sync      import sync
+from commands.fetch     import fetch
 from commands.dashboard import dashboard
 from commands.positions import positions
 from commands.trades    import trades, history
@@ -22,6 +23,7 @@ def cli():
 
 
 cli.add_command(sync)
+cli.add_command(fetch)
 cli.add_command(dashboard)
 cli.add_command(positions)
 cli.add_command(trades)
