@@ -73,6 +73,11 @@ class Database:
                     invested       REAL NOT NULL,
                     total_deposits REAL NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS symbol_sector (
+                    symbol     TEXT PRIMARY KEY,
+                    sector     TEXT NOT NULL,
+                    updated_at TEXT DEFAULT (datetime('now'))
+                );
             """)
             # Migrate existing price_cache tables that predate the ldcp column
             try:
@@ -147,9 +152,34 @@ class Database:
     def get_cached_prices(self) -> dict[str, dict]:
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT symbol, price, ldcp, market_date FROM price_cache"
+                "SELECT symbol, price, ldcp, market_date, updated_at FROM price_cache"
             ).fetchall()
-        return {r["symbol"]: {"price": r["price"], "ldcp": r["ldcp"], "market_date": r["market_date"]} for r in rows}
+        return {
+            r["symbol"]: {
+                "price": r["price"],
+                "ldcp": r["ldcp"],
+                "market_date": r["market_date"],
+                "updated_at": r["updated_at"],
+            }
+            for r in rows
+        }
+
+    # ── Symbol sectors ────────────────────────────────────────────────────────
+
+    def update_symbol_sectors(self, sectors: dict[str, str]):
+        """Upsert {symbol: sector} scraped from PSX company pages."""
+        with self._conn() as conn:
+            conn.executemany(
+                """INSERT OR REPLACE INTO symbol_sector (symbol, sector, updated_at)
+                   VALUES (?, ?, datetime('now'))""",
+                list(sectors.items()),
+            )
+
+    def get_symbol_sectors(self) -> dict[str, str]:
+        """Return {symbol: sector} for all known symbols."""
+        with self._conn() as conn:
+            rows = conn.execute("SELECT symbol, sector FROM symbol_sector").fetchall()
+        return {r["symbol"]: r["sector"] for r in rows}
 
     # ── Shariah cache ─────────────────────────────────────────────────────────
 

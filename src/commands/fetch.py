@@ -34,12 +34,14 @@ def fetch(quiet: bool):
     symbols = list({t["symbol"] for t in trades if t["symbol"]})
 
     if symbols:
-        prices, ldcps = _fetch_all(symbols)
+        prices, ldcps, sectors = _fetch_all(symbols)
         if prices:
             db.update_price_cache(prices, ldcps, today_str)
             if not quiet:
                 console.print(f"  Updated prices for {len(prices)}/{len(symbols)} symbol(s)")
-        elif not quiet:
+        if sectors:
+            db.update_symbol_sectors(sectors)
+        if not prices and not quiet:
             console.print("[yellow]Could not fetch stock prices.[/yellow]")
 
     if not quiet:

@@ -3,17 +3,18 @@ import click
 from rich import box
 from rich.table import Table
 
-from helpers import _DEFAULT_SHARIAH_PDF, _resolve_shariah_pdf, console, get_db
+from helpers import _resolve_shariah_pdf, console, get_db
 from portfolio import compute_positions
 from price_fetcher import get_prices
 
 SORT_KEYS = {
-    "value":  lambda p, _ldcps: p.market_value,
-    "symbol": lambda p, _ldcps: p.symbol,
-    "day":    lambda p,  ldcps: p.shares * (p.current_price - ldcps.get(p.symbol, p.current_price)),
-    "abs":    lambda p, _ldcps: p.unrealized_pnl_pct,
-    "cagr":   lambda p, _ldcps: p.cagr,
-    "xirr":   lambda p, _ldcps: p.xirr,
+    "value":  lambda p, _ldcps, _tmv: p.market_value,
+    "pct":    lambda p, _ldcps,  tmv: p.market_value / tmv if tmv else 0,
+    "symbol": lambda p, _ldcps, _tmv: p.symbol,
+    "day":    lambda p,  ldcps, _tmv: p.shares * (p.current_price - ldcps.get(p.symbol, p.current_price)),
+    "abs":    lambda p, _ldcps, _tmv: p.unrealized_pnl_pct,
+    "cagr":   lambda p, _ldcps, _tmv: p.cagr,
+    "xirr":   lambda p, _ldcps, _tmv: p.xirr,
 }
 
 
@@ -23,14 +24,12 @@ SORT_KEYS = {
     default="value",
     type=click.Choice(list(SORT_KEYS)),
     show_default=True,
-    help="Sort positions by: value, symbol, day, abs, cagr, xirr",
+    help="Sort positions by: value, pct, symbol, day, abs, cagr, xirr",
 )
-@click.option(
-    "--shariah", "shariah_pdf",
-    default=None, metavar="PDF",
-    help=f"Path to KMIALL screening PDF to show debt ratio (default: {_DEFAULT_SHARIAH_PDF})",
-)
-def positions(sort: str, shariah_pdf):
+@click.option("--shariah",  "show_shariah", is_flag=True, default=False, help="Show D/A Ratio column (uses cached Shariah data)")
+@click.option("--cagr",    "show_cagr",    is_flag=True, default=False, help="Show CAGR column")
+@click.option("--pct-cost","pct_by_cost",  is_flag=True, default=False, help="Show Port % by cost instead of market value")
+def positions(sort: str, show_shariah: bool, show_cagr: bool, pct_by_cost: bool):
     """Show current holdings with unrealized P&L."""
     db = get_db()
     trades = db.get_all_trades()
@@ -43,27 +42,32 @@ def positions(sort: str, shariah_pdf):
     with console.status("Fetching prices…"):
         prices, ldcps = get_prices(db, symbols)
 
-    shariah_map = _resolve_shariah_pdf(shariah_pdf)
+    shariah_map = _resolve_shariah_pdf(None) if show_shariah else {}
 
     pos_list = compute_positions(trades, prices)
     if not pos_list:
         console.print("No open positions.")
         return
 
-    reverse = sort != "symbol"
-    pos_list.sort(key=lambda p: SORT_KEYS[sort](p, ldcps), reverse=reverse)
+    total_market_value = sum(p.market_value for p in pos_list)
+    total_cost         = sum(p.cost_basis   for p in pos_list)
 
-    show_shariah = bool(shariah_map)
+    reverse = sort != "symbol"
+    pos_list.sort(key=lambda p: SORT_KEYS[sort](p, ldcps, total_market_value), reverse=reverse)
+
     table = Table(title=f"Current Positions (sorted by {sort})", box=box.ROUNDED)
     table.add_column("Symbol",       style="bold cyan")
     table.add_column("Shares",       justify="right")
     table.add_column("Avg Buy",      justify="right")
     table.add_column("Current",      justify="right")
+    table.add_column("Cost",         justify="right")
     table.add_column("Market Value", justify="right")
+    table.add_column("Port % (cost)" if pct_by_cost else "Port %", justify="right")
     table.add_column("Day P&L",      justify="right")
     table.add_column("Day %",        justify="right")
     table.add_column("Abs Ret",      justify="right")
-    table.add_column("CAGR",         justify="right")
+    if show_cagr:
+        table.add_column("CAGR",     justify="right")
     table.add_column("XIRR",         justify="right")
     if show_shariah:
         table.add_column("D/A Ratio", justify="right")
@@ -79,13 +83,16 @@ def positions(sort: str, shariah_pdf):
             f"{pos.shares:,}",
             f"Rs {pos.avg_buy_price:.2f}",
             f"Rs {pos.current_price:.2f}",
+            f"Rs {pos.cost_basis:>12,.0f}",
             f"Rs {pos.market_value:>12,.0f}",
+            f"{pos.cost_basis / total_cost * 100:.1f}%" if (pct_by_cost and total_cost) else (f"{pos.market_value / total_market_value * 100:.1f}%" if total_market_value else "—"),
             f"[{day_color}]Rs {day_pnl:>10,.0f}[/{day_color}]",
             f"[{day_color}]{day_pct:+.2f}%[/{day_color}]",
             f"[{tot_color}]{pos.unrealized_pnl_pct:+.1f}%[/{tot_color}]",
-            f"[{tot_color}]{pos.cagr:+.1f}%[/{tot_color}]",
-            f"[{tot_color}]{pos.xirr:+.1f}%[/{tot_color}]",
         ]
+        if show_cagr:
+            row.append(f"[{tot_color}]{pos.cagr:+.1f}%[/{tot_color}]")
+        row.append(f"[{tot_color}]{pos.xirr:+.1f}%[/{tot_color}]")
         if show_shariah:
             entry = shariah_map.get(pos.symbol, {})
             da = entry.get("debt_ratio")

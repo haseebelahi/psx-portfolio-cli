@@ -10,6 +10,7 @@ from commands.sync      import sync
 from commands.fetch     import fetch
 from commands.dashboard import dashboard
 from commands.positions import positions
+from commands.sectors   import sectors
 from commands.trades    import trades, history
 from commands.dividends import dividends
 from commands.chart     import chart
@@ -26,6 +27,7 @@ cli.add_command(sync)
 cli.add_command(fetch)
 cli.add_command(dashboard)
 cli.add_command(positions)
+cli.add_command(sectors)
 cli.add_command(trades)
 cli.add_command(history)
 cli.add_command(dividends)

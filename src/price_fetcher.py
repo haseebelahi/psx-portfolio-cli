@@ -1,7 +1,7 @@
 """PSX price fetcher — scrapes dps.psx.com.pk/company/{SYMBOL} in parallel."""
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, time
+from datetime import datetime, time, timezone
 
 import pytz
 import requests
@@ -16,6 +16,8 @@ PSX_HOME    = "https://dps.psx.com.pk/"
 PRICE_RE    = re.compile(r'class="quote__close">\s*Rs\.?([\d,]+\.?\d*)')
 # <div class="stats_label">LDCP</div><div class="stats_value">198.72</div>
 LDCP_RE     = re.compile(r'stats_label">LDCP</div><div class="stats_value">([\d,]+\.?\d*)')
+# <div class="quote__sector"><span>COMMERCIAL BANKS</span></div>
+SECTOR_RE   = re.compile(r'class="quote__sector"><span>([^<]+)</span>')
 # Matches name + value + change% for each top index block
 INDEX_RE    = re.compile(
     r'topIndices__item__name">(\w+)</div>'
@@ -37,41 +39,68 @@ def is_market_open() -> bool:
     return MARKET_OPEN <= t <= MARKET_CLOSE
 
 
+INTRADAY_CACHE_SECS = 60
+
+
 def should_use_cache(db) -> bool:
-    """Return True when after-hours cache is still valid for today."""
-    if is_market_open():
-        return False
-    today_str = _now_pkt().strftime("%Y-%m-%d")
+    """Return True when cache is still valid.
+
+    After hours: reuse today's cache until next market open.
+    During market hours: reuse if the cache is less than INTRADAY_CACHE_SECS old.
+    """
     cached = db.get_cached_prices()
-    return any(v["market_date"] == today_str for v in cached.values())
+    if not cached:
+        return False
+
+    today_str = _now_pkt().strftime("%Y-%m-%d")
+
+    if not is_market_open():
+        return any(v["market_date"] == today_str for v in cached.values())
+
+    # During market hours: use cache if freshly updated within the last 60 s
+    sample = next(iter(cached.values()))
+    updated_at = sample.get("updated_at")
+    if not updated_at:
+        return False
+    try:
+        cache_time = datetime.fromisoformat(updated_at).replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - cache_time).total_seconds()
+        return age < INTRADAY_CACHE_SECS
+    except (ValueError, TypeError):
+        return False
 
 
-def _fetch_one(symbol: str) -> tuple[str, float | None, float | None]:
+def _fetch_one(symbol: str) -> tuple[str, float | None, float | None, str | None]:
     try:
         resp = requests.get(BASE_URL.format(symbol=symbol), timeout=10)
         resp.raise_for_status()
         html = resp.text
         pm = PRICE_RE.search(html)
         lm = LDCP_RE.search(html)
-        price = float(pm.group(1).replace(",", "")) if pm else None
-        ldcp  = float(lm.group(1).replace(",", "")) if lm else None
-        return symbol, price, ldcp
+        sm = SECTOR_RE.search(html)
+        price  = float(pm.group(1).replace(",", "")) if pm else None
+        ldcp   = float(lm.group(1).replace(",", "")) if lm else None
+        sector = sm.group(1).strip() if sm else None
+        return symbol, price, ldcp, sector
     except Exception:
-        return symbol, None, None
+        return symbol, None, None, None
 
 
-def _fetch_all(symbols: list[str]) -> tuple[dict[str, float], dict[str, float]]:
-    prices: dict[str, float] = {}
-    ldcps:  dict[str, float] = {}
+def _fetch_all(symbols: list[str]) -> tuple[dict[str, float], dict[str, float], dict[str, str]]:
+    prices:  dict[str, float] = {}
+    ldcps:   dict[str, float] = {}
+    sectors: dict[str, str]   = {}
     with ThreadPoolExecutor(max_workers=min(20, len(symbols))) as pool:
         futures = {pool.submit(_fetch_one, sym): sym for sym in symbols}
         for future in as_completed(futures):
-            sym, price, ldcp = future.result()
+            sym, price, ldcp, sector = future.result()
             if price is not None:
                 prices[sym] = price
             if ldcp is not None:
                 ldcps[sym] = ldcp
-    return prices, ldcps
+            if sector is not None:
+                sectors[sym] = sector
+    return prices, ldcps, sectors
 
 
 def fetch_indices(names: list[str] = ("KSE100", "KMI30")) -> dict[str, dict]:
@@ -106,11 +135,13 @@ def get_prices(db, symbols: list[str]) -> tuple[dict[str, float], dict[str, floa
         ldcps  = {sym: cached_ldcps[sym]  for sym in symbols if sym in cached_ldcps}
         return prices, ldcps
 
-    fresh_prices, fresh_ldcps = _fetch_all(symbols)
+    fresh_prices, fresh_ldcps, fresh_sectors = _fetch_all(symbols)
 
     if fresh_prices:
         market_date = _now_pkt().strftime("%Y-%m-%d")
         db.update_price_cache(fresh_prices, fresh_ldcps, market_date)
+    if fresh_sectors:
+        db.update_symbol_sectors(fresh_sectors)
 
     prices: dict[str, float] = {}
     ldcps:  dict[str, float] = {}
