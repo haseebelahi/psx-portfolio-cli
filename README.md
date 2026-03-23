@@ -12,6 +12,7 @@ A local CLI tool for tracking a Pakistani stock exchange (PSX) portfolio. Automa
 - Shariah compliance view — debt ratio and dividend purification amounts
 - Terminal charts for NLV history and cumulative deposits vs KSE100
 - Manual entry for dividends and deposits
+- Google Drive sync — push/pull data and config across machines
 
 ## Project Structure
 
@@ -29,8 +30,10 @@ psx-auto-update/
 │   │   ├── dividends.py    # dividends command
 │   │   ├── chart.py        # chart group (nlv, deposits)
 │   │   ├── add.py          # add group (dividend, deposit)
-│   │   └── import_.py      # import + import-kse commands
+│   │   ├── import_.py      # import + import-kse commands
+│   │   └── drive.py        # push/pull commands (Google Drive sync)
 │   ├── database.py         # SQLite wrapper
+│   ├── drive_client.py     # Google Drive API client
 │   ├── price_fetcher.py    # Live price scraping with caching
 │   ├── portfolio.py        # P&L and summary calculations
 │   ├── gmail_client.py     # Gmail API integration
@@ -66,12 +69,14 @@ uv sync
 ### 2. Google API credentials
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Enable the **Gmail API**
+2. Enable the **Gmail API** and **Google Drive API**
 3. Create an OAuth 2.0 Desktop credential
 4. Download and save to `credentials/gmail_credentials.json`
 5. Add your email as a test user on the OAuth consent screen
 
 On first run, a browser window will open for authorization. The token is saved automatically.
+
+The Drive sync (`push`/`pull`) reuses the same credentials file but stores its token separately at `credentials/drive_token.json`.
 
 ### 3. Configure
 
@@ -83,6 +88,10 @@ gmail:
   subject_filter: "Confirmation Note"
   credentials_path: credentials/gmail_credentials.json
   token_path: credentials/gmail_token.json
+
+drive:
+  credentials_path: credentials/sheets_credentials.json
+  token_path: credentials/drive_token.json
 
 state:
   state_file: data/state.json
@@ -188,6 +197,18 @@ Stores KSE100/KMI30 values in `index_history` and refreshes `price_cache` for al
 ```
 */30 4-10 * * 1-5 cd /path/to/psx-auto-update && ./psx fetch --quiet >> logs/fetch.log 2>&1
 ```
+
+### Google Drive sync
+
+Sync the database, config, and credentials across machines via Google Drive.
+
+```bash
+./psx push          # upload local files to Drive (overwrites remote)
+./psx pull          # download files from Drive to local paths (overwrites local)
+./psx pull --yes    # skip confirmation prompt
+```
+
+Files synced: `data/portfolio.db`, `data/state.json`, `config/config.yaml`, and all credential files. The machine-specific `drive_token.json` is intentionally excluded.
 
 ### Import historical KSE100 data
 
