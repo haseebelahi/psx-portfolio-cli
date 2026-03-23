@@ -16,6 +16,7 @@ from commands.dividends import dividends
 from commands.chart     import chart
 from commands.add       import add
 from commands.import_   import import_from_sheets, import_kse_csv
+from commands.drive     import push, pull
 
 
 @click.group()
@@ -35,6 +36,8 @@ cli.add_command(chart)
 cli.add_command(add)
 cli.add_command(import_from_sheets, name="import")
 cli.add_command(import_kse_csv)
+cli.add_command(push)
+cli.add_command(pull)
 
 if __name__ == "__main__":
     cli()

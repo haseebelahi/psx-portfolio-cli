@@ -10,6 +10,10 @@ sheets:
   spreadsheet_id: "1SEbkKKooBganzymX9WayuqqEJwUefDi-MZ72UoWlqIM"
   tab_name: "Entry"
 
+drive:
+  credentials_path: "credentials/sheets_credentials.json"
+  token_path: "credentials/drive_token.json"
+
 state:
   state_file: "data/state.json"
   lookback_days: 30
