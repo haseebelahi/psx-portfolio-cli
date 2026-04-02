@@ -78,24 +78,31 @@ class PortfolioSummary:
 def compute_positions(trades: list[dict], prices: dict[str, float]) -> list[Position]:
     holdings: dict[str, dict] = {}
 
-    for t in trades:
+    for t in sorted(trades, key=lambda x: x["date"]):
         sym = t["symbol"]
         if sym not in holdings:
-            holdings[sym] = {"buy_shares": 0, "sell_shares": 0, "buy_cost": 0.0, "flows": []}
+            holdings[sym] = {"buy_shares": 0, "sell_shares": 0, "buy_cost": 0.0, "running_shares": 0, "flows": []}
         d = holdings[sym]
         amt = t["shares"] * t["trade_price"]
         if t["mode"] == "BUY":
-            d["buy_shares"] += t["shares"]
-            d["buy_cost"]   += amt
+            d["buy_shares"]     += t["shares"]
+            d["buy_cost"]       += amt
+            d["running_shares"] += t["shares"]
             d["flows"].append((date.fromisoformat(t["date"]), -amt))
         elif t["mode"] == "SELL":
-            d["sell_shares"] += t["shares"]
+            d["sell_shares"]    += t["shares"]
+            d["running_shares"] -= t["shares"]
             d["flows"].append((date.fromisoformat(t["date"]), +amt))
+            # Position fully closed — reset cost basis so re-entry starts fresh
+            if d["running_shares"] <= 0:
+                d["buy_shares"]     = 0
+                d["buy_cost"]       = 0.0
+                d["running_shares"] = 0
 
     today = date.today()
     positions: list[Position] = []
     for sym, data in holdings.items():
-        current_shares = data["buy_shares"] - data["sell_shares"]
+        current_shares = data["running_shares"]
         if current_shares <= 0:
             continue
 
